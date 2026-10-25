@@ -1,0 +1,30 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Persistent Volume Claims for Health Monitor & Dashboard Storage
+# ──────────────────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: controller-logs-pvc
+  namespace: health-monitor
+  labels:
+    app: health-monitor
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 128Mi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: incident-data-pvc
+  namespace: health-monitor
+  labels:
+    app: sample-app
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 128Mi

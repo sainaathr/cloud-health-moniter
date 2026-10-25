@@ -1,0 +1,61 @@
+global:
+  # How long to wait before re-sending an alert that has not been resolved
+  resolve_timeout: 5m
+  # SMTP settings for email — override via environment variable substitution
+  # or use a Kubernetes Secret mounted as env vars
+  smtp_smarthost: "smtp.gmail.com:587"
+  smtp_from: "alertmanager@example.com"
+  smtp_auth_username: ""
+  smtp_auth_password: ""
+
+# ── Routing ───────────────────────────────────────────────────────────────────
+# All alerts → default receiver
+route:
+  receiver: "default"
+  group_by: ["alertname", "namespace"]
+  group_wait: 30s          # wait 30s to collect related alerts into one notification
+  group_interval: 5m       # wait 5m before sending another notification for the same group
+  repeat_interval: 12h     # re-send if still firing after 12h
+
+  # Override for critical alerts — notify faster
+  routes:
+    - match:
+        severity: critical
+      receiver: "critical-alerts"
+      group_wait: 10s
+      repeat_interval: 1h
+
+# ── Receivers ─────────────────────────────────────────────────────────────────
+receivers:
+  # Default receiver — logs to stdout (no external system needed)
+  - name: "default"
+    webhook_configs:
+      - url: "http://localhost:9999/webhook"   # placeholder webhook
+        send_resolved: true
+
+  # Critical alerts receiver
+  # Uncomment and fill in your Telegram or email settings to enable
+  - name: "critical-alerts"
+    # --- Telegram example (requires alertmanager-bot or similar) ---
+    # webhook_configs:
+    #   - url: "https://api.telegram.org/bot<TOKEN>/sendMessage"
+    #     send_resolved: true
+
+    # --- Email example ---
+    # email_configs:
+    #   - to: "your@email.com"
+    #     send_resolved: true
+
+    # For now: same webhook as default
+    webhook_configs:
+      - url: "http://localhost:9999/webhook"
+        send_resolved: true
+
+# ── Inhibit rules ─────────────────────────────────────────────────────────────
+# Suppress warning alerts when a critical alert is already firing for the same pod
+inhibit_rules:
+  - source_match:
+      severity: "critical"
+    target_match:
+      severity: "warning"
+    equal: ["alertname", "namespace", "pod"]

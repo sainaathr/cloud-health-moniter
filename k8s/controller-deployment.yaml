@@ -1,0 +1,126 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Controller Deployment
+# Runs the Python health monitor inside the Kubernetes cluster.
+#
+# Key points:
+#   - serviceAccountName: uses our RBAC-limited ServiceAccount
+#   - WATCH_NAMESPACE env var tells the controller which namespace to monitor
+#   - ALERT_BACKEND / TELEGRAM_* read from a Kubernetes Secret (never hardcoded)
+#   - restartPolicy: Always ensures the controller restarts if it crashes
+# ──────────────────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: health-monitor-controller
+  namespace: health-monitor
+  labels:
+    app: health-monitor
+spec:
+  replicas: 1          # Only 1 controller replica needed
+  selector:
+    matchLabels:
+      app: health-monitor
+  template:
+    metadata:
+      labels:
+        app: health-monitor
+    spec:
+      serviceAccountName: health-monitor-sa   # uses our RBAC ServiceAccount
+
+      containers:
+        - name: health-monitor
+          # Replace with your actual image after: docker build & push
+          # For Minikube: use eval $(minikube docker-env) and build locally
+          image: health-monitor:latest
+          imagePullPolicy: IfNotPresent       # use local image on Minikube
+
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+
+          env:
+            # Which namespace to watch for pods
+            - name: WATCH_NAMESPACE
+              value: "health-monitor"
+
+            # Polling interval in seconds
+            - name: POLL_INTERVAL
+              value: "30"
+
+            # Alert backend: "email", "telegram", "both", or "none"
+            - name: ALERT_BACKEND
+              value: "email"
+
+            # Alert recipient
+            - name: SMTP_TO_EMAIL
+              value: "sainaath.r2025@vitstudent.ac.in"
+            - name: ALERT_TO_EMAIL
+              value: "sainaath.r2025@vitstudent.ac.in"
+
+            # SMTP Server Configuration
+            - name: SMTP_HOST
+              value: "smtp.gmail.com"
+            - name: SMTP_PORT
+              value: "587"
+            - name: SMTP_USE_TLS
+              value: "true"
+            - name: SMTP_TIMEOUT_SECONDS
+              value: "10"
+            - name: SMTP_TIMEOUT_SEC
+              value: "10"
+            - name: SMTP_FROM_EMAIL
+              value: "sainaath.r738507@gmail.com"
+            - name: SMTP_FROM
+              value: "sainaath.r738507@gmail.com"
+            - name: SMTP_DRY_RUN
+              value: "false"
+
+            # SMTP Credentials loaded from Secret (optional so controller still runs if secret is absent)
+            - name: SMTP_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: smtp-credentials
+                  key: smtp-username
+                  optional: true
+
+            - name: SMTP_USER
+              valueFrom:
+                secretKeyRef:
+                  name: smtp-credentials
+                  key: smtp-username
+                  optional: true
+
+            - name: SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: smtp-credentials
+                  key: smtp-password
+                  optional: true
+
+            # Telegram credentials — loaded from a Kubernetes Secret
+            - name: TELEGRAM_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: alert-secret
+                  key: telegram-token
+                  optional: true
+
+            - name: TELEGRAM_CHAT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: alert-secret
+                  key: telegram-chat-id
+                  optional: true
+
+          volumeMounts:
+            - name: logs
+              mountPath: /app/logs
+
+      volumes:
+        - name: logs
+          persistentVolumeClaim:
+            claimName: controller-logs-pvc

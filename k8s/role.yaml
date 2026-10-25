@@ -1,0 +1,38 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# RBAC — ClusterRole
+# Defines WHAT the controller is allowed to do cluster-wide.
+# We use a ClusterRole (instead of Role) because:
+#   - Listing nodes requires cluster-wide access
+#
+# LEAST PRIVILEGE: We only grant exactly what the controller needs:
+#   pods       → get, list, watch, delete (for self-healing)
+#   nodes      → get, list, watch (for node health checks)
+#   deployments/replicasets → get, list (to find pod owners)
+#   events     → get, list, watch (for diagnostics)
+# ──────────────────────────────────────────────────────────────────────────────
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: health-monitor-role
+  labels:
+    app: health-monitor
+rules:
+  # Pod operations — watch for unhealthy pods, delete them for recovery
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "delete"]
+
+  # Node operations — check node conditions (Ready, DiskPressure, etc.)
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+
+  # Events — read cluster events for diagnostics
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+
+  # Deployments — read to verify pod ownership before self-healing
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list", "watch"]

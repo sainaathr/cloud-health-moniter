@@ -1,0 +1,1138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>K8s Health Monitor & Self-Healing Control Plane</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
+        code, pre, .font-mono { font-family: 'JetBrains Mono', monospace; }
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.82);
+            backdrop-filter: blur(14px);
+            border: 1px solid rgba(51, 65, 85, 0.65);
+        }
+        .pulse-dot {
+            box-shadow: 0 0 10px currentColor;
+        }
+        /* Custom scrollbars */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(15, 23, 42, 0.6);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(71, 85, 105, 0.6);
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(100, 116, 139, 0.8);
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col antialiased selection:bg-sky-600 selection:text-white">
+
+    <!-- Background Grid Effect -->
+    <div class="fixed inset-0 z-0 opacity-15 pointer-events-none" 
+         style="background-image: radial-gradient(#38bdf8 1px, transparent 1px); background-size: 28px 28px;">
+    </div>
+
+    <!-- Top Navigation Bar -->
+    <header class="border-b border-slate-800 bg-slate-900/90 backdrop-blur sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
+            <!-- Brand -->
+            <div class="flex items-center space-x-3 shrink-0">
+                <div class="w-9 h-9 rounded-lg bg-sky-600 flex items-center justify-center text-white font-bold shadow-lg shadow-sky-500/20 text-lg">
+                    ⎈
+                </div>
+                <div>
+                    <h1 class="text-sm sm:text-base font-bold text-white tracking-tight flex items-center gap-2">
+                        K8s Health Monitor & Self-Healing Engine
+                        <span class="text-[11px] px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-400 border border-sky-500/20 font-medium hidden sm:inline">v2.0-Production</span>
+                    </h1>
+                    <p class="text-[11px] text-slate-400">Autonomous Pod Remediation & Notification Control Plane</p>
+                </div>
+            </div>
+
+            <!-- Header Controls & Status -->
+            <div class="flex items-center space-x-3 sm:space-x-4 shrink-0">
+                <!-- Cluster Connection Indicator -->
+                <div class="flex items-center space-x-2 bg-slate-800/80 px-3 py-1.5 rounded-lg border border-slate-700 text-xs">
+                    <span id="source-dot" class="w-2 h-2 rounded-full bg-amber-400"></span>
+                    <span class="text-slate-400 hidden md:inline">Cluster:</span>
+                    <span id="data-source-label" class="font-semibold text-slate-200">Connecting...</span>
+                </div>
+
+                <!-- Reset All Faults Button -->
+                <button onclick="resetSystemState()" id="btn-reset" class="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 hover:border-slate-600 text-xs font-medium py-1.5 px-3 rounded-lg transition-all flex items-center gap-1.5 shadow-sm">
+                    <span class="text-sky-400">↺</span>
+                    <span class="hidden sm:inline">Reset All Faults</span>
+                    <span class="sm:hidden">Reset</span>
+                </button>
+
+                <div class="h-6 w-px bg-slate-800 hidden sm:block"></div>
+
+                <!-- Host Pod Badge -->
+                <div class="text-right hidden sm:block">
+                    <div class="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Serving Host</div>
+                    <div class="font-mono text-xs text-emerald-400 font-semibold truncate max-w-[140px]">{{ pod_name }}</div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content Layout -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 w-full z-10 relative space-y-6">
+
+        <!-- 1. System Health & Topology Banner (4 Equal Cards) -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <!-- App Health Status -->
+            <div class="glass-panel p-5 rounded-xl flex items-center justify-between border-slate-800/80 shadow-md">
+                <div class="space-y-1">
+                    <div class="text-xs text-slate-400 font-semibold uppercase tracking-wider">Application State</div>
+                    <div id="stat-app-health" class="text-xl font-bold text-emerald-400 flex items-center gap-2">
+                        <span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
+                        <span id="stat-app-health-text">HEALTHY</span>
+                    </div>
+                    <div class="text-[11px] text-slate-500">Readiness: <span id="stat-ready-detail" class="text-slate-300 font-mono">HTTP 200</span></div>
+                </div>
+                <div class="w-11 h-11 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 text-xl shrink-0">
+                    🛡️
+                </div>
+            </div>
+
+            <!-- Controller State -->
+            <div class="glass-panel p-5 rounded-xl flex items-center justify-between border-slate-800/80 shadow-md">
+                <div class="space-y-1">
+                    <div class="text-xs text-slate-400 font-semibold uppercase tracking-wider">Health Controller</div>
+                    <div id="stat-controller" class="text-xl font-bold text-slate-400 flex items-center gap-2">
+                        <span id="stat-controller-dot" class="w-2.5 h-2.5 rounded-full bg-slate-500"></span>
+                        <span id="stat-controller-text">UNAVAILABLE</span>
+                    </div>
+                    <div class="text-[11px] text-slate-500">Self-Protection: <span class="text-emerald-400 font-medium">Enabled</span></div>
+                </div>
+                <div class="w-11 h-11 rounded-lg bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400 text-xl shrink-0">
+                    ⚙️
+                </div>
+            </div>
+
+            <!-- Pods Health -->
+            <div class="glass-panel p-5 rounded-xl flex items-center justify-between border-slate-800/80 shadow-md">
+                <div class="space-y-1">
+                    <div class="text-xs text-slate-400 font-semibold uppercase tracking-wider">Deployment Pods</div>
+                    <div id="stat-pods" class="text-xl font-bold text-slate-100 font-mono">
+                        <span id="stat-pods-healthy" class="text-emerald-400">0</span> / <span id="stat-pods-total" class="text-slate-300">0</span> Ready
+                    </div>
+                    <div class="text-[11px] text-slate-500">Desired: <span id="stat-pods-desired" class="text-slate-300 font-mono">0</span> Replicas</div>
+                </div>
+                <div class="w-11 h-11 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 text-xl shrink-0">
+                    📦
+                </div>
+            </div>
+
+            <!-- Autoscaler (HPA) Status -->
+            <div class="glass-panel p-5 rounded-xl flex items-center justify-between border-slate-800/80 shadow-md">
+                <div class="space-y-1">
+                    <div class="text-xs text-slate-400 font-semibold uppercase tracking-wider">HPA Autoscaler</div>
+                    <div id="stat-hpa" class="text-xl font-bold text-cyan-400 font-mono">
+                        <span id="stat-hpa-val">Target: 60%</span>
+                    </div>
+                    <div class="text-[11px] text-slate-500 truncate max-w-[160px]"><span id="stat-hpa-status" class="text-slate-300">Awaiting cluster</span></div>
+                </div>
+                <div class="w-11 h-11 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 text-xl shrink-0">
+                    📈
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. Live Pods Table -->
+        <div class="glass-panel rounded-xl overflow-hidden shadow-lg border-slate-800/80">
+            <div class="px-6 py-4 border-b border-slate-800 flex justify-between items-center bg-slate-900/60">
+                <div class="flex items-center gap-2.5">
+                    <h2 class="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full bg-sky-400"></span>
+                        Cluster Pod Status
+                    </h2>
+                    <span id="pod-count-badge" class="px-2 py-0.5 text-xs rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-mono">0 pods</span>
+                </div>
+                <div class="flex items-center gap-3 text-xs text-slate-400">
+                    <button onclick="refreshPods()" class="hover:text-white transition flex items-center gap-1 text-slate-300 px-2 py-1 rounded bg-slate-800/60 border border-slate-700/60">
+                        <span>⟳</span> Refresh
+                    </button>
+                    <span>|</span>
+                    <a href="/metrics" target="_blank" class="hover:text-sky-400 text-slate-300 underline flex items-center gap-1 font-mono">
+                        Prometheus Metrics ↗
+                    </a>
+                </div>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left text-xs">
+                    <thead class="bg-slate-950/80 text-slate-400 uppercase tracking-wider border-b border-slate-800 font-medium">
+                        <tr>
+                            <th class="py-3 px-6 min-w-[200px]">Pod Name</th>
+                            <th class="py-3 px-6 min-w-[130px]">Workload</th>
+                            <th class="py-3 px-6 min-w-[120px]">Status / Phase</th>
+                            <th class="py-3 px-6 min-w-[100px]">Readiness</th>
+                            <th class="py-3 px-6 min-w-[90px]">Restarts</th>
+                            <th class="py-3 px-6 min-w-[130px]">Node</th>
+                            <th class="py-3 px-6 min-w-[160px]">Last Termination</th>
+                        </tr>
+                    </thead>
+                    <tbody id="pods-table-body" class="divide-y divide-slate-800/60 text-slate-300 font-mono">
+                        <tr>
+                            <td colspan="7" class="py-6 px-6 text-center text-slate-500">Checking cluster connection...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 3. Simulation & Chaos Controls (Equal Height 2-Column Grid) -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
+
+            <!-- Left Card: Non-Destructive Simulation Tests -->
+            <div class="glass-panel p-6 rounded-xl flex flex-col justify-between border-slate-800/80 shadow-lg">
+                <div class="space-y-4">
+                    <!-- Header -->
+                    <div class="flex items-center justify-between pb-1 border-b border-slate-800/60">
+                        <h2 class="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                            <span class="w-2.5 h-2.5 rounded-full bg-sky-500"></span> Simulation Controls (Safe)
+                        </h2>
+                        <span class="text-[11px] text-sky-400 bg-sky-950/40 px-2 py-0.5 rounded border border-sky-800/40 font-semibold">Non-Destructive</span>
+                    </div>
+
+                    <!-- Readiness Probe Failure Simulation -->
+                    <div class="bg-slate-900/90 p-4 rounded-lg border border-slate-800 space-y-2.5">
+                        <div class="flex items-center justify-between gap-2">
+                            <div>
+                                <span class="font-semibold text-xs sm:text-sm text-slate-200">Readiness Probe State (HTTP 503)</span>
+                                <p class="text-[11px] text-slate-400 mt-0.5">Causes /health/ready to return 503. K8s Service isolates unready pod.</p>
+                            </div>
+                            <span id="badge-ready" class="text-xs px-2.5 py-1 rounded-md font-mono font-semibold shrink-0 {{ 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' if is_ready else 'bg-rose-500/10 text-rose-400 border border-rose-500/20' }}">
+                                {{ 'READY' if is_ready else 'NOT READY' }}
+                            </span>
+                        </div>
+                        <button onclick="toggleReadiness()" id="btn-readiness" class="w-full bg-slate-800 hover:bg-amber-600 text-amber-300 hover:text-white border border-amber-500/30 font-semibold py-2 px-4 rounded-lg text-xs transition-all flex items-center justify-center gap-2 shadow-sm">
+                            <span>⚡</span> Toggle Readiness State
+                        </button>
+                    </div>
+
+                    <!-- Controlled CPU Workload & Traffic Burst -->
+                    <div class="bg-slate-900/90 p-4 rounded-lg border border-slate-800 space-y-2.5">
+                        <div>
+                            <span class="font-semibold text-xs sm:text-sm text-slate-200">CPU Workload &amp; Autoscaling (HPA)</span>
+                            <p class="text-[11px] text-slate-400 mt-0.5">Generates realistic CPU cycles and increments Prometheus latency counters.</p>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2.5">
+                            <button onclick="triggerFault('/api/work?complexity=1000000', 'GET')" class="bg-slate-800 hover:bg-sky-600 text-sky-300 hover:text-white border border-sky-500/30 py-2 px-3 rounded-lg text-xs font-semibold transition-all text-center">
+                                1M CPU Workload
+                            </button>
+                            <button onclick="triggerTrafficBurst()" class="bg-slate-800 hover:bg-cyan-600 text-cyan-300 hover:text-white border border-cyan-500/30 py-2 px-3 rounded-lg text-xs font-semibold transition-all text-center flex items-center justify-center gap-1.5">
+                                <span>🚀</span> Traffic Burst (10s)
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Controlled Memory Allocation -->
+                    <div class="bg-slate-900/90 p-4 rounded-lg border border-slate-800 space-y-2.5">
+                        <div class="flex items-center justify-between gap-2">
+                            <div>
+                                <span class="font-semibold text-xs sm:text-sm text-slate-200">Controlled Memory Allocation</span>
+                                <p class="text-[11px] text-slate-400 mt-0.5">Safely tests memory consumption (safe boundary: 50MB limit).</p>
+                            </div>
+                            <span id="memory-allocated-label" class="text-xs font-mono text-purple-300 bg-purple-500/10 px-2 py-0.5 rounded border border-purple-500/20 shrink-0">0 MB</span>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2.5">
+                            <button onclick="triggerFault('/api/memory-test?size_mb=20', 'GET')" class="bg-slate-800 hover:bg-purple-600 text-purple-300 hover:text-white border border-purple-500/30 py-2 px-3 rounded-lg text-xs font-semibold transition-all text-center">
+                                + Allocate 20MB
+                            </button>
+                            <button onclick="triggerFault('/api/memory-test?size_mb=0', 'GET')" class="bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 py-2 px-3 rounded-lg text-xs font-semibold transition-all text-center">
+                                Clear Memory
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="pt-3 border-t border-slate-800/60 text-[11px] text-slate-500 font-mono text-center">
+                    All simulation actions are safe and non-destructive.
+                </div>
+            </div>
+
+            <!-- Right Card: Destructive Chaos Engineering & Observability -->
+            <div class="glass-panel p-6 rounded-xl flex flex-col justify-between border-slate-800/80 shadow-lg">
+                <div class="space-y-4">
+                    <!-- Header -->
+                    <div class="flex items-center justify-between pb-1 border-b border-slate-800/60">
+                        <h2 class="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                            <span class="w-2.5 h-2.5 rounded-full bg-rose-500"></span> Destructive Fault Injection
+                        </h2>
+                        <span class="text-[11px] text-rose-400 font-semibold bg-rose-950/40 px-2 py-0.5 rounded border border-rose-800/40">🔒 Strictly Gated</span>
+                    </div>
+
+                    <!-- Server-Side Security Authorization Banner -->
+                    <div class="bg-slate-900/90 p-3.5 rounded-lg border border-slate-800 space-y-2">
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                                <span>🔑</span> Admin Auth Token:
+                            </span>
+                            <span class="text-[10px] text-slate-400 font-mono">Header: X-Chaos-Token</span>
+                        </div>
+                        <input type="password" id="chaos-auth-token" placeholder="Enter server chaos auth token" value="k8s-chaos-admin-secure" class="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-slate-200 font-mono text-xs focus:outline-none focus:border-rose-500">
+                        <label class="flex items-center gap-2 text-xs text-cyan-300 select-none cursor-pointer pt-0.5">
+                            <input type="checkbox" id="chaos-dry-run" checked class="rounded bg-slate-800 border-slate-700 text-cyan-500 focus:ring-0">
+                            <span>Dry-Run Safety Mode (Validates auth gate without container termination)</span>
+                        </label>
+                    </div>
+
+                    <!-- Pod Crash Injection & OOMKilled Side-by-Side Grid -->
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <!-- Pod Crash Injection -->
+                        <div class="bg-slate-900/90 p-3.5 rounded-lg border border-rose-950/60 flex flex-col justify-between space-y-2">
+                            <div>
+                                <div class="flex items-center justify-between">
+                                    <span class="font-semibold text-xs text-slate-200">Pod Crash Injection</span>
+                                    <span class="text-[10px] text-rose-400 bg-rose-950/40 px-1.5 py-0.5 rounded border border-rose-800/40">Gated</span>
+                                </div>
+                                <p class="text-[11px] text-slate-400 mt-1">Tests Kubelet restart and controller reconciliation.</p>
+                            </div>
+                            <button onclick="triggerCrashAction()" class="w-full bg-rose-950/50 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-800/60 font-semibold py-2 px-3 rounded-lg text-xs transition-all flex items-center justify-center gap-1.5 shadow-sm">
+                                <span>⚠️</span> Crash Pod
+                            </button>
+                        </div>
+
+                        <!-- OOMKilled Trigger -->
+                        <div class="bg-slate-900/90 p-3.5 rounded-lg border border-slate-800 flex flex-col justify-between space-y-2">
+                            <div>
+                                <div class="flex items-center justify-between">
+                                    <span class="font-semibold text-xs text-slate-200">OOMKilled Test</span>
+                                    <span class="text-[10px] text-amber-400 bg-amber-950/40 px-1.5 py-0.5 rounded border border-amber-800/40">128Mi Limit</span>
+                                </div>
+                                <p class="text-[11px] text-slate-400 mt-1">Simulates 200MB allocation exceeding pod memory limit.</p>
+                            </div>
+                            <button onclick="triggerOomAction()" class="w-full bg-amber-950/50 hover:bg-amber-600 text-amber-300 hover:text-white border border-amber-500/30 font-semibold py-2 px-3 rounded-lg text-xs transition-all flex items-center justify-center gap-1.5 shadow-sm">
+                                <span>💥</span> Trigger OOM
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Observability Quick Links -->
+                    <div class="bg-slate-900/90 p-3 rounded-lg border border-slate-800">
+                        <div class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2 flex items-center justify-between">
+                            <span>DevOps Observability Links</span>
+                            <span class="text-slate-500 font-mono text-[10px]">Local Dashboards</span>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2 text-xs font-mono">
+                            <a href="http://localhost:3000" target="_blank" class="p-2 rounded bg-slate-800/60 border border-slate-700/60 hover:border-slate-500 text-slate-300 flex items-center justify-between transition hover:text-white">
+                                <span>Grafana</span>
+                                <span>↗</span>
+                            </a>
+                            <a href="http://localhost:9090" target="_blank" class="p-2 rounded bg-slate-800/60 border border-slate-700/60 hover:border-slate-500 text-slate-300 flex items-center justify-between transition hover:text-white">
+                                <span>Prometheus</span>
+                                <span>↗</span>
+                            </a>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="pt-3 border-t border-slate-800/60 text-[11px] text-slate-500 font-mono text-center">
+                    Destructive chaos requires valid <code class="text-slate-400">X-Chaos-Token</code> authentication.
+                </div>
+            </div>
+        </div>
+
+        <!-- 4. Persistent Incident Timeline & Action Stream (2-Column & 1-Column Layout) -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 items-stretch">
+            <!-- Persistent Incident Timeline (2 Cols) -->
+            <div class="glass-panel p-6 rounded-xl lg:col-span-2 flex flex-col justify-between border-slate-800/80 shadow-lg">
+                <div>
+                    <!-- Header -->
+                    <div class="flex items-center justify-between mb-4 flex-wrap gap-2 pb-1 border-b border-slate-800/60">
+                        <div class="flex items-center gap-2">
+                            <h2 class="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                                <span class="w-2.5 h-2.5 rounded-full bg-indigo-500"></span>
+                                Incident Timeline
+                            </h2>
+                            <span class="text-[11px] px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700 font-mono">SQLite Persistent</span>
+                        </div>
+
+                        <!-- Filter Tabs & Refresh -->
+                        <div class="flex items-center gap-2">
+                            <div class="flex items-center gap-1 bg-slate-900/90 p-1 rounded-lg border border-slate-800 text-[11px]">
+                                <button onclick="setIncidentFilter('ALL')" id="filter-tab-all" class="px-2.5 py-1 rounded font-semibold bg-sky-600 text-white">All</button>
+                                <button onclick="setIncidentFilter('LIVE')" id="filter-tab-live" class="px-2.5 py-1 rounded font-semibold text-slate-400 hover:text-white">Live K8s</button>
+                                <button onclick="setIncidentFilter('SIMULATION')" id="filter-tab-sim" class="px-2.5 py-1 rounded font-semibold text-slate-400 hover:text-white">Simulated</button>
+                            </div>
+                            <button onclick="fetchIncidents()" class="text-xs text-slate-400 hover:text-white transition flex items-center gap-1 px-2.5 py-1 rounded bg-slate-800/80 border border-slate-700/60">
+                                <span>⟳</span> Refresh
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Incidents Table Container -->
+                    <div class="overflow-x-auto overflow-y-auto max-h-[320px] border border-slate-800 rounded-lg">
+                        <table class="w-full text-left text-xs">
+                            <thead class="bg-slate-950/90 text-slate-400 uppercase tracking-wider border-b border-slate-800 sticky top-0 font-medium">
+                                <tr>
+                                    <th class="py-2.5 px-3 min-w-[140px] whitespace-nowrap">Incident ID</th>
+                                    <th class="py-2.5 px-3 min-w-[110px] whitespace-nowrap">Classification</th>
+                                    <th class="py-2.5 px-3 min-w-[140px] whitespace-nowrap">Problem Type</th>
+                                    <th class="py-2.5 px-3 min-w-[160px] whitespace-nowrap">Target Pod</th>
+                                    <th class="py-2.5 px-3 min-w-[110px] whitespace-nowrap">Status</th>
+                                    <th class="py-2.5 px-3 min-w-[200px] whitespace-nowrap">Remediation Action</th>
+                                    <th class="py-2.5 px-3 min-w-[85px] whitespace-nowrap">Time</th>
+                                </tr>
+                            </thead>
+                            <tbody id="incidents-body" class="divide-y divide-slate-800/60 text-slate-300 font-mono text-[11px]">
+                                <tr>
+                                    <td colspan="7" class="py-8 text-center text-slate-500">No incidents recorded yet.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="mt-3 pt-2 text-[11px] text-slate-500 font-mono flex items-center justify-between border-t border-slate-800/40">
+                    <span>Audit Store: <span class="text-slate-400">incidents.db</span></span>
+                    <span>State: <span class="text-emerald-400">Synchronized</span></span>
+                </div>
+            </div>
+
+            <!-- Action & Controller Log Stream (1 Col) -->
+            <div class="glass-panel p-6 rounded-xl flex flex-col justify-between border-slate-800/80 shadow-lg">
+                <div>
+                    <!-- Header -->
+                    <div class="flex items-center justify-between mb-4 pb-1 border-b border-slate-800/60">
+                        <h2 class="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                            <span class="w-2 h-2 rounded-full bg-emerald-400 pulse-dot"></span>
+                            Live Action Stream
+                        </h2>
+                        <span class="text-[11px] font-mono text-slate-400">Real-time</span>
+                    </div>
+
+                    <!-- Log Stream Container -->
+                    <div id="log-stream" class="font-mono text-[11px] space-y-1.5 h-[320px] overflow-y-auto text-slate-400 bg-slate-950/90 p-3.5 rounded-lg border border-slate-800">
+                        <div class="text-sky-400">&gt; Health monitor UI connected. Initializing stream...</div>
+                    </div>
+                </div>
+
+                <div class="mt-3 pt-2 text-[11px] text-slate-500 font-mono text-center border-t border-slate-800/40">
+                    Telemetry streamed from health controller &amp; chaos APIs.
+                </div>
+            </div>
+        </div>
+
+        <!-- 5. Notifications & Alerting Center (1-Column & 2-Column Balanced Grid) -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 items-stretch">
+            <!-- Left Card: Channel Configuration & Test Panel (1 Col) -->
+            <div class="glass-panel p-6 rounded-xl flex flex-col justify-between border-slate-800/80 shadow-lg">
+                <div class="space-y-4">
+                    <!-- Header with Title & Inline Badge -->
+                    <div class="flex items-center justify-between pb-1 border-b border-slate-800/60">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <h2 class="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                                <span class="w-2.5 h-2.5 rounded-full bg-indigo-500 shadow-sm shadow-indigo-500/50"></span>
+                                Notifications Center
+                            </h2>
+                        </div>
+                        <span id="notif-status-badge" class="text-[11px] font-mono px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 font-semibold">
+                            DRY-RUN ACTIVE
+                        </span>
+                    </div>
+
+                    <!-- Clean Uniform Key-Value Rows -->
+                    <div class="divide-y divide-slate-800/80 bg-slate-900/90 rounded-lg border border-slate-800 text-xs font-mono">
+                        <div class="flex items-center justify-between px-3.5 py-2.5">
+                            <span class="text-slate-400 font-medium">Channel Backend</span>
+                            <span id="notif-backend" class="text-indigo-300 font-semibold bg-indigo-950/40 px-2 py-0.5 rounded border border-indigo-800/40">EMAIL (SMTP)</span>
+                        </div>
+                        <div class="flex items-center justify-between px-3.5 py-2.5">
+                            <span class="text-slate-400 font-medium">SMTP Server</span>
+                            <span id="notif-host" class="text-slate-200">smtp.gmail.com:587</span>
+                        </div>
+                        <div class="flex items-center justify-between px-3.5 py-2.5">
+                            <span class="text-slate-400 font-medium shrink-0">SMTP Username</span>
+                            <span id="notif-username" class="text-slate-300 text-[11px] truncate text-right font-mono">Not Configured</span>
+                        </div>
+                        <div class="flex items-center justify-between px-3.5 py-2.5">
+                            <span class="text-slate-400 font-medium shrink-0">Sender Address</span>
+                            <span id="notif-from" class="text-slate-300 text-[11px] truncate text-right">k8s-monitor@cloud-health.local</span>
+                        </div>
+                        <div class="flex flex-col px-3.5 py-2.5 gap-1">
+                            <span class="text-slate-400 font-medium">Target Recipient</span>
+                            <span id="notif-to" class="text-sky-300 text-[11px] font-semibold bg-sky-950/40 px-2 py-1 rounded border border-sky-800/40 break-all">
+                                sainaath.r2025@vitstudent.ac.in
+                            </span>
+                        </div>
+                        <div class="flex items-center justify-between px-3.5 py-2.5">
+                            <span class="text-slate-400 font-medium">Encryption Mode</span>
+                            <span id="notif-tls" class="text-emerald-400 font-semibold flex items-center gap-1.5 justify-end">
+                                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> STARTTLS Active
+                            </span>
+                        </div>
+                        <div class="flex items-center justify-between px-3.5 py-2.5">
+                            <span class="text-slate-400 font-medium">Timeout / Dedup</span>
+                            <span id="notif-timeout-cooldown" class="text-slate-300 font-mono text-[11px]">10s / 300s window</span>
+                        </div>
+                        <div class="flex items-center justify-between px-3.5 py-2.5 border-t border-slate-800/60 bg-slate-950/30">
+                            <span class="text-slate-400 font-medium">Last Successful SMTP</span>
+                            <span id="notif-last-success" class="text-emerald-400 text-[11px] font-mono">None yet</span>
+                        </div>
+                        <div class="flex items-center justify-between px-3.5 py-2.5 bg-slate-950/30">
+                            <span class="text-slate-400 font-medium">Last Error</span>
+                            <span id="notif-last-error" class="text-rose-400 text-[11px] font-mono truncate max-w-[170px]" title="None">None</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Test Actions Panel -->
+                <div class="mt-4 pt-3 border-t border-slate-800/80 space-y-2">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <!-- Safe Dry-Run Dispatch Button -->
+                        <button onclick="sendTestAlert(false)" id="btn-test-dry" class="w-full bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 font-semibold py-2 px-3 rounded-lg text-xs transition-all flex items-center justify-center gap-1.5 shadow-sm">
+                            <span class="text-amber-400">⚡</span>
+                            <span>Safe Dry-Run</span>
+                        </button>
+
+                        <!-- Real SMTP Live Delivery Test / Demo Button -->
+                        <button onclick="sendTestAlert(true)" id="btn-test-live" class="w-full bg-indigo-600/30 hover:bg-indigo-600 text-indigo-200 hover:text-white border border-indigo-500/50 font-semibold py-2 px-3 rounded-lg text-xs transition-all flex items-center justify-center gap-1.5 shadow-sm">
+                            <span class="text-sky-400">📨</span>
+                            <span id="btn-test-live-text">Demo: Send Real Email</span>
+                        </button>
+                    </div>
+                    <div class="text-[11px] text-slate-400 bg-slate-950/70 p-2.5 rounded-lg border border-slate-800/90 space-y-1">
+                        <div class="flex items-center gap-1.5 text-slate-300 font-medium">
+                            <span class="text-sky-400">ℹ️</span> SMTP Relay Delivery Notice:
+                        </div>
+                        <p class="text-slate-400 text-[10px] leading-relaxed">
+                            <strong class="text-emerald-400">SMTP accepted</strong> confirms delivery to your mail relay, but does not guarantee arrival in the recipient inbox (check Spam/Junk folder or recipient security policies). When credentials are missing, status reports <strong class="text-amber-400">Not configured</strong>.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Card: Recent Notifications Audit Log (2 Cols) -->
+            <div class="glass-panel p-6 rounded-xl lg:col-span-2 flex flex-col justify-between border-slate-800/80 shadow-lg">
+                <div>
+                    <!-- Header with Title & Badge -->
+                    <div class="flex items-center justify-between mb-4 pb-1 border-b border-slate-800/60">
+                        <div class="flex items-center gap-2">
+                            <h2 class="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                                <span class="w-2.5 h-2.5 rounded-full bg-sky-500 shadow-sm shadow-sky-500/50"></span>
+                                Recent Notification Deliveries
+                            </h2>
+                            <span class="text-[11px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">Audit History</span>
+                        </div>
+                        <button onclick="fetchNotificationHistory()" class="text-xs text-slate-400 hover:text-white transition flex items-center gap-1 px-2.5 py-1 rounded bg-slate-800/80 border border-slate-700/60 hover:border-slate-600">
+                            <span>⟳</span> Refresh
+                        </button>
+                    </div>
+
+                    <!-- Audit Table Container -->
+                    <div class="overflow-x-auto overflow-y-auto max-h-[320px] border border-slate-800 rounded-lg">
+                        <table class="w-full text-left text-xs">
+                            <thead class="bg-slate-950/90 text-slate-400 uppercase tracking-wider border-b border-slate-800 sticky top-0 font-medium">
+                                <tr>
+                                    <th class="py-2.5 px-3 min-w-[75px] whitespace-nowrap">Time</th>
+                                    <th class="py-2.5 px-3 min-w-[70px] whitespace-nowrap">Channel</th>
+                                    <th class="py-2.5 px-3 min-w-[190px] whitespace-nowrap">Target Recipient</th>
+                                    <th class="py-2.5 px-3 min-w-[210px] whitespace-nowrap">Subject / Event</th>
+                                    <th class="py-2.5 px-3 min-w-[110px] whitespace-nowrap">Delivery Status</th>
+                                    <th class="py-2.5 px-3 min-w-[120px] whitespace-nowrap">Incident ID</th>
+                                </tr>
+                            </thead>
+                            <tbody id="notifications-body" class="divide-y divide-slate-800/60 text-slate-300 font-mono text-[11px]">
+                                <tr>
+                                    <td colspan="6" class="py-8 text-center text-slate-500">No notifications dispatched yet. Use test actions to verify delivery pipeline.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Footer Summary Bar matching Left Card -->
+                <div class="mt-3 pt-2 border-t border-slate-800/60 flex items-center justify-between text-[11px] text-slate-500 font-mono flex-wrap gap-2">
+                    <div class="flex items-center gap-2">
+                        <span class="w-1.5 h-1.5 rounded-full bg-sky-400"></span>
+                        <span>Recipient: <span class="text-sky-400 font-medium">sainaath.r2025@vitstudent.ac.in</span></span>
+                    </div>
+                    <span>Deduplication Window: <span class="text-slate-300 font-medium">300s</span></span>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="mt-auto border-t border-slate-800/80 bg-slate-900/60 py-4 text-center text-xs text-slate-500">
+        Auto Kubernetes Health Monitoring &amp; Self-Healing Engine • Hardened Autonomous Control Plane
+    </footer>
+
+    <!-- Interactive Logic & Auto-Polling -->
+    <script>
+        let currentFilter = 'ALL';
+
+        // ── Logging Helper ──────────────────────────────────────────────────
+        function addLogEntry(msg, level = 'INFO') {
+            const stream = document.getElementById('log-stream');
+            if (!stream) return;
+            const entry = document.createElement('div');
+            const time = new Date().toLocaleTimeString();
+            let color = 'text-slate-300';
+            if (level === 'ERROR') color = 'text-rose-400';
+            else if (level === 'WARN') color = 'text-amber-400';
+            else if (level === 'SUCCESS') color = 'text-emerald-400';
+
+            entry.className = color;
+            entry.innerHTML = `<span class="text-slate-600">[${time}]</span> ${msg}`;
+            stream.prepend(entry);
+        }
+
+        // ── Data Fetching: Overview & Health ─────────────────────────────────
+        async function fetchOverview() {
+            try {
+                const res = await fetch('/api/cluster/overview');
+                if (!res.ok) return;
+                const data = await res.json();
+
+                // Source indicator
+                const dot = document.getElementById('source-dot');
+                const label = document.getElementById('data-source-label');
+                if (data.k8s_connected) {
+                    dot.className = 'w-2 h-2 rounded-full bg-emerald-400 pulse-dot';
+                    label.innerText = 'Connected (Live K8s)';
+                    label.className = 'font-semibold text-emerald-400';
+                } else {
+                    dot.className = 'w-2 h-2 rounded-full bg-amber-400';
+                    label.innerText = 'Unavailable (Offline)';
+                    label.className = 'font-semibold text-amber-400';
+                }
+
+                // App health
+                const healthEl = document.getElementById('stat-app-health-text');
+                const readyDetail = document.getElementById('stat-ready-detail');
+                if (data.app_health === 'HEALTHY') {
+                    healthEl.innerText = 'HEALTHY';
+                    healthEl.className = 'text-emerald-400';
+                    readyDetail.innerText = 'HTTP 200 (Ready)';
+                } else {
+                    healthEl.innerText = 'DEGRADED';
+                    healthEl.className = 'text-rose-400';
+                    readyDetail.innerText = 'HTTP 503 (Unready)';
+                }
+
+                // Controller state
+                const ctrlEl = document.getElementById('stat-controller-text');
+                const ctrlDot = document.getElementById('stat-controller-dot');
+                ctrlEl.innerText = data.controller_status;
+                if (data.controller_status === 'RUNNING') {
+                    ctrlEl.className = 'text-emerald-400';
+                    ctrlDot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400';
+                } else if (data.controller_status === 'UNAVAILABLE') {
+                    ctrlEl.className = 'text-slate-400';
+                    ctrlDot.className = 'w-2.5 h-2.5 rounded-full bg-slate-500';
+                } else {
+                    ctrlEl.className = 'text-amber-400';
+                    ctrlDot.className = 'w-2.5 h-2.5 rounded-full bg-amber-400';
+                }
+
+                // Pods stats
+                document.getElementById('stat-pods-healthy').innerText = data.pods_healthy;
+                document.getElementById('stat-pods-total').innerText = data.pods_total;
+                document.getElementById('stat-pods-desired').innerText = data.replicas_desired;
+
+                // HPA stats
+                if (data.hpa && data.hpa.current_cpu !== null) {
+                    document.getElementById('stat-hpa-val').innerText = `${data.hpa.current_cpu}% / 60%`;
+                    document.getElementById('stat-hpa-status').innerText = 'Autoscaler Active';
+                } else {
+                    document.getElementById('stat-hpa-val').innerText = 'Target: 60%';
+                    document.getElementById('stat-hpa-status').innerText = data.hpa ? data.hpa.status : 'Active';
+                }
+
+                // Memory allocated
+                const memMb = Math.round((data.memory_allocated_bytes || 0) / (1024 * 1024));
+                document.getElementById('memory-allocated-label').innerText = `${memMb} MB`;
+
+            } catch (err) {
+                console.error("Overview fetch failed:", err);
+            }
+        }
+
+        // ── Data Fetching: Pods Table ───────────────────────────────────────
+        async function refreshPods() {
+            try {
+                const res = await fetch('/api/cluster/pods');
+                if (!res.ok) return;
+                const data = await res.json();
+                const tbody = document.getElementById('pods-table-body');
+                document.getElementById('pod-count-badge').innerText = `${data.count} pods (${data.source})`;
+
+                if (!data.k8s_connected || !data.pods || data.pods.length === 0) {
+                    tbody.innerHTML = `
+                        <tr>
+                            <td colspan="7" class="py-6 px-6 text-center text-amber-400/90">
+                                <div class="flex flex-col items-center gap-1.5">
+                                    <span class="font-semibold">⚠️ Live Kubernetes cluster is offline or unreachable</span>
+                                    <span class="text-xs text-slate-400">${data.error || 'No live pods available. Connect Minikube to view live pods.'}</span>
+                                </div>
+                            </td>
+                        </tr>
+                    `;
+                    return;
+                }
+
+                tbody.innerHTML = data.pods.map(p => {
+                    const readyBadge = p.ready 
+                        ? `<span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">READY</span>`
+                        : `<span class="px-2 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20">NOT READY</span>`;
+
+                    const phaseColor = p.phase === 'Running' ? 'text-emerald-400' : 'text-amber-400';
+                    const termText = p.termination_reason ? `<span class="text-rose-400">${p.termination_reason}</span>` : `<span class="text-slate-600">—</span>`;
+
+                    return `
+                        <tr class="hover:bg-slate-800/40 transition">
+                            <td class="py-3 px-6 font-semibold text-slate-200">${p.name}</td>
+                            <td class="py-3 px-6 text-slate-400">${p.workload}</td>
+                            <td class="py-3 px-6 ${phaseColor}">${p.phase}</td>
+                            <td class="py-3 px-6">${readyBadge}</td>
+                            <td class="py-3 px-6 ${p.restarts > 0 ? 'text-amber-400 font-bold' : 'text-slate-400'}">${p.restarts}</td>
+                            <td class="py-3 px-6 text-slate-400">${p.node}</td>
+                            <td class="py-3 px-6">${termText}</td>
+                        </tr>
+                    `;
+                }).join('');
+
+            } catch (err) {
+                console.error("Pod refresh error:", err);
+            }
+        }
+
+        // ── Data Fetching: Incident Timeline ────────────────────────────────
+        function setIncidentFilter(filter) {
+            currentFilter = filter;
+            const btnAll = document.getElementById('filter-tab-all');
+            const btnLive = document.getElementById('filter-tab-live');
+            const btnSim = document.getElementById('filter-tab-sim');
+
+            btnAll.className = 'px-2.5 py-1 rounded font-semibold ' + (filter === 'ALL' ? 'bg-sky-600 text-white' : 'text-slate-400 hover:text-white');
+            btnLive.className = 'px-2.5 py-1 rounded font-semibold ' + (filter === 'LIVE' ? 'bg-sky-600 text-white' : 'text-slate-400 hover:text-white');
+            btnSim.className = 'px-2.5 py-1 rounded font-semibold ' + (filter === 'SIMULATION' ? 'bg-sky-600 text-white' : 'text-slate-400 hover:text-white');
+
+            fetchIncidents();
+        }
+
+        async function fetchIncidents() {
+            try {
+                let url = '/api/incidents?limit=25';
+                if (currentFilter === 'SIMULATION') url += '&category=SIMULATION';
+
+                const res = await fetch(url);
+                if (!res.ok) return;
+                const data = await res.json();
+                const tbody = document.getElementById('incidents-body');
+
+                let incidents = data.incidents || [];
+                if (currentFilter === 'LIVE') {
+                    incidents = incidents.filter(i => !i.is_simulated && i.category !== 'SIMULATION');
+                }
+
+                if (incidents.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="7" class="py-6 text-center text-slate-500">No matching incidents recorded.</td></tr>`;
+                    return;
+                }
+
+                tbody.innerHTML = incidents.map(inc => {
+                    let badgeClass = 'bg-slate-800 text-slate-300';
+                    if (inc.status === 'RECOVERED' || inc.status === 'RECOVERED_VERIFIED' || inc.status === 'SIMULATED_RECOVERED') {
+                        badgeClass = 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
+                    } else if (inc.status === 'UNREADY' || inc.status === 'NATIVE_RECOVERED' || inc.status === 'CONTROLLER_RECOVERING') {
+                        badgeClass = 'bg-amber-500/10 text-amber-400 border border-amber-500/20';
+                    } else if (inc.status === 'TRIGGERED' || inc.status === 'SIMULATED_FAILURE' || inc.status === 'FAILED' || inc.status === 'TIMEOUT') {
+                        badgeClass = 'bg-rose-500/10 text-rose-400 border border-rose-500/20';
+                    }
+
+                    // Classification badge
+                    let catBadge = '';
+                    const cat = inc.category || 'GENERAL';
+                    if (cat === 'SIMULATION') {
+                        catBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-purple-500/10 text-purple-400 border border-purple-500/20">SIMULATED</span>`;
+                    } else if (cat === 'K8S_READINESS') {
+                        catBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">K8S-READINESS</span>`;
+                    } else if (cat === 'NATIVE_K8S') {
+                        catBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20">NATIVE-K8S</span>`;
+                    } else if (cat === 'CONTROLLER_ACTION') {
+                        catBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-500/10 text-rose-400 border border-rose-800/40">CONTROLLER</span>`;
+                    } else if (cat === 'VERIFIED_REPLACEMENT') {
+                        catBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">VERIFIED-POD</span>`;
+                    } else {
+                        catBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-800 text-slate-400 border border-slate-700">GENERAL</span>`;
+                    }
+
+                    const timeStr = inc.detection_time ? (inc.detection_time.includes(' ') ? inc.detection_time.split(' ')[1] : inc.detection_time) : '—';
+
+                    return `
+                        <tr class="hover:bg-slate-800/40 transition">
+                            <td class="py-2.5 px-3 font-bold text-sky-400 whitespace-nowrap">${inc.incident_id}</td>
+                            <td class="py-2.5 px-3 whitespace-nowrap">${catBadge}</td>
+                            <td class="py-2.5 px-3 text-slate-200 font-medium whitespace-nowrap">${inc.incident_type}</td>
+                            <td class="py-2.5 px-3 text-slate-300 font-mono whitespace-nowrap">${inc.target_pod}</td>
+                            <td class="py-2.5 px-3 whitespace-nowrap"><span class="px-2 py-0.5 rounded text-[10px] font-semibold ${badgeClass}">${inc.status}</span></td>
+                            <td class="py-2.5 px-3 text-slate-400 truncate max-w-[240px]" title="${inc.recovery_action || 'Pending'}">${inc.recovery_action || 'Pending'}</td>
+                            <td class="py-2.5 px-3 text-slate-500 font-mono whitespace-nowrap">${timeStr}</td>
+                        </tr>
+                    `;
+                }).join('');
+
+            } catch (err) {
+                console.error("Incidents fetch error:", err);
+            }
+        }
+
+        // ── Simulation Triggers ─────────────────────────────────────────────
+        async function triggerFault(endpoint, method) {
+            addLogEntry(`Invoking: <span class="text-white">${endpoint}</span>`, 'INFO');
+            try {
+                const response = await fetch(endpoint, { method: method });
+                const data = await response.json();
+                if (!response.ok) {
+                    addLogEntry(data.message || data.error || `Error ${response.status}`, 'ERROR');
+                    return;
+                }
+                addLogEntry(data.message || 'Operation successful', 'SUCCESS');
+                fetchOverview();
+                fetchIncidents();
+                refreshPods();
+            } catch (error) {
+                addLogEntry(`Network error: ${error.message}`, 'ERROR');
+            }
+        }
+
+        async function toggleReadiness() {
+            try {
+                const response = await fetch('/api/chaos/readiness', { method: 'POST' });
+                const data = await response.json();
+                addLogEntry(data.message, data.is_ready ? 'SUCCESS' : 'WARN');
+
+                const badge = document.getElementById('badge-ready');
+                if (data.is_ready) {
+                    badge.innerText = 'READY';
+                    badge.className = 'text-xs px-2.5 py-1 rounded-md font-mono font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
+                } else {
+                    badge.innerText = 'NOT READY';
+                    badge.className = 'text-xs px-2.5 py-1 rounded-md font-mono font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20';
+                }
+                fetchOverview();
+                fetchIncidents();
+                refreshPods();
+                fetchNotificationHistory();
+            } catch (e) {
+                addLogEntry(`Readiness error: ${e.message}`, 'ERROR');
+            }
+        }
+
+        async function triggerTrafficBurst() {
+            addLogEntry("Initiating 10s concurrent load test (5 workers) for HPA scaling demonstration...", "INFO");
+            try {
+                const res = await fetch('/api/traffic/generate?duration=10&workers=5', { method: 'POST' });
+                const data = await res.json();
+                addLogEntry(data.message, 'SUCCESS');
+            } catch (e) {
+                addLogEntry(`Traffic generator error: ${e.message}`, 'ERROR');
+            }
+        }
+
+        async function triggerCrashAction() {
+            const token = document.getElementById('chaos-auth-token').value.trim();
+            const dryRun = document.getElementById('chaos-dry-run').checked;
+
+            if (!token) {
+                alert("Please provide the genuine Admin Chaos Token in the input box above.");
+                return;
+            }
+
+            addLogEntry(`Dispatching pod crash request (dry_run=${dryRun})...`, 'WARN');
+            try {
+                const headers = {
+                    'X-Chaos-Token': token,
+                    'X-Dry-Run': dryRun ? 'true' : 'false'
+                };
+                const res = await fetch('/api/chaos/crash', { method: 'POST', headers: headers });
+                const data = await res.json();
+                if (!res.ok) {
+                    addLogEntry(data.error || data.message || `Blocked (${res.status})`, 'ERROR');
+                    return;
+                }
+                addLogEntry(data.message || 'Crash triggered.', 'WARN');
+                fetchIncidents();
+                if (!dryRun) {
+                    addLogEntry("Self-healing initiated. Re-checking state in 8 seconds...", 'INFO');
+                    setTimeout(() => { fetchOverview(); refreshPods(); fetchIncidents(); }, 8500);
+                }
+            } catch (e) {
+                addLogEntry(`Crash request returned error: ${e.message}`, 'ERROR');
+            }
+        }
+
+        async function triggerOomAction() {
+            const token = document.getElementById('chaos-auth-token').value.trim();
+            const dryRun = document.getElementById('chaos-dry-run').checked;
+
+            if (!token) {
+                alert("Please provide the genuine Admin Chaos Token in the input box above.");
+                return;
+            }
+
+            addLogEntry(`Dispatching OOMKilled request (dry_run=${dryRun})...`, 'WARN');
+            try {
+                const headers = {
+                    'X-Chaos-Token': token,
+                    'X-Dry-Run': dryRun ? 'true' : 'false'
+                };
+                const res = await fetch('/api/chaos/oom', { method: 'POST', headers: headers });
+                const data = await res.json();
+                if (!res.ok) {
+                    addLogEntry(data.error || data.message || `Blocked (${res.status})`, 'ERROR');
+                    return;
+                }
+                addLogEntry(data.message + (data.incident_id ? ` [${data.incident_id}]` : ''), 'WARN');
+                fetchIncidents();
+                fetchOverview();
+            } catch (e) {
+                addLogEntry(`OOM trigger error: ${e.message}`, 'ERROR');
+            }
+        }
+
+        async function resetSystemState() {
+            addLogEntry("Resetting system state: restoring readiness and clearing memory...", "INFO");
+            try {
+                const res = await fetch('/api/chaos/reset', { method: 'POST' });
+                const data = await res.json();
+                addLogEntry(data.message, 'SUCCESS');
+                fetchOverview();
+                fetchIncidents();
+                refreshPods();
+            } catch (e) {
+                addLogEntry(`Reset error: ${e.message}`, 'ERROR');
+            }
+        }
+
+        // ── Notification Center Status & History ─────────────────────────────
+        async function fetchNotificationStatus() {
+            try {
+                const res = await fetch('/api/notifications/status');
+                const data = await res.json();
+                if (data.status === 'success' && data.config) {
+                    const cfg = data.config;
+                    document.getElementById('notif-backend').innerText = cfg.backend.toUpperCase() + (cfg.backend === 'email' ? ' (SMTP)' : '');
+                    document.getElementById('notif-host').innerText = `${cfg.smtp_host}:${cfg.smtp_port}`;
+                    
+                    const userEl = document.getElementById('notif-username');
+                    if (userEl) userEl.innerText = cfg.smtp_username || cfg.smtp_user || 'Not Configured';
+
+                    const fromEl = document.getElementById('notif-from');
+                    fromEl.innerText = cfg.smtp_from_email || cfg.smtp_from;
+                    fromEl.title = cfg.smtp_from_email || cfg.smtp_from;
+
+                    const toEl = document.getElementById('notif-to');
+                    toEl.innerText = cfg.smtp_to_email || cfg.alert_to_email;
+                    toEl.title = cfg.smtp_to_email || cfg.alert_to_email;
+
+                    const tlsEl = document.getElementById('notif-tls');
+                    if (cfg.smtp_use_ssl) {
+                        tlsEl.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-cyan-400"></span> SSL/TLS Active`;
+                        tlsEl.className = 'font-mono text-cyan-400 font-semibold flex items-center gap-1.5 justify-end';
+                    } else if (cfg.smtp_use_tls) {
+                        tlsEl.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> STARTTLS Active`;
+                        tlsEl.className = 'font-mono text-emerald-400 font-semibold flex items-center gap-1.5 justify-end';
+                    } else {
+                        tlsEl.innerHTML = `Plain / None`;
+                        tlsEl.className = 'font-mono text-slate-400 justify-end';
+                    }
+
+                    const tcEl = document.getElementById('notif-timeout-cooldown');
+                    if (tcEl) tcEl.innerText = `${cfg.smtp_timeout_seconds || 10}s / ${cfg.cooldown_seconds || 300}s window`;
+
+                    // Populate audit summary from API if present
+                    if (data.summary) {
+                        const s = data.summary;
+                        const succEl = document.getElementById('notif-last-success');
+                        if (succEl) {
+                            if (s.last_success) {
+                                const t = s.last_success.sent_at.includes(' ') ? s.last_success.sent_at.split(' ')[1] : s.last_success.sent_at;
+                                succEl.innerText = `${t} (${s.last_success.recipient})`;
+                                succEl.title = `Delivered to ${s.last_success.recipient} at ${s.last_success.sent_at}`;
+                            } else {
+                                succEl.innerText = 'None yet';
+                            }
+                        }
+                        const errEl = document.getElementById('notif-last-error');
+                        if (errEl) {
+                            if (s.last_error) {
+                                const errMsg = s.last_error.error_message || s.last_error.status;
+                                errEl.innerText = errMsg;
+                                errEl.title = errMsg;
+                            } else {
+                                errEl.innerText = 'None';
+                            }
+                        }
+                    }
+
+                    const badge = document.getElementById('notif-status-badge');
+                    const state = cfg.delivery_state || (cfg.dry_run ? 'DRY_RUN' : (cfg.enabled ? 'LIVE_READY' : 'DISABLED'));
+
+                    if (!cfg.enabled || state === 'DISABLED') {
+                        badge.innerText = 'DISABLED';
+                        badge.className = 'text-[11px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700 font-semibold';
+                    } else if (state === 'NOT_CONFIGURED' || state === 'MISSING_CONFIG') {
+                        badge.innerText = 'NOT CONFIGURED';
+                        badge.className = 'text-[11px] font-mono px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 font-semibold';
+                    } else if (state === 'LIVE_READY') {
+                        badge.innerText = 'LIVE SMTP READY';
+                        badge.className = 'text-[11px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold';
+                    } else {
+                        badge.innerText = 'DRY-RUN (SIMULATED)';
+                        badge.className = 'text-[11px] font-mono px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 font-semibold';
+                    }
+                }
+            } catch (err) {
+                console.error("Notification status error:", err);
+            }
+        }
+
+        async function fetchNotificationHistory() {
+            try {
+                const res = await fetch('/api/notifications/history?limit=15');
+                const data = await res.json();
+                const notifs = data.notifications || [];
+                const tbody = document.getElementById('notifications-body');
+
+                if (notifs.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="6" class="py-8 text-center text-slate-500">No notifications dispatched yet. Use test actions to verify delivery pipeline.</td></tr>`;
+                    return;
+                }
+
+                tbody.innerHTML = notifs.map(n => {
+                    let badgeClass = 'bg-slate-800 text-slate-400 border border-slate-700';
+                    let label = (n.status || 'UNKNOWN').toUpperCase();
+
+                    if (n.status === 'smtp_accepted' || n.status === 'sent') {
+                        badgeClass = 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
+                        label = 'SMTP ACCEPTED';
+                    } else if (n.status === 'not_configured' || n.status === 'missing_config') {
+                        badgeClass = 'bg-amber-500/10 text-amber-400 border border-amber-500/20';
+                        label = 'NOT CONFIGURED';
+                    } else if (n.status === 'timed_out') {
+                        badgeClass = 'bg-amber-500/10 text-amber-400 border border-amber-500/20';
+                        label = 'TIMED OUT';
+                    } else if (n.status === 'dry_run') {
+                        badgeClass = 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20';
+                        label = 'DRY RUN';
+                    } else if (n.status === 'failed') {
+                        badgeClass = 'bg-rose-500/10 text-rose-400 border border-rose-500/20';
+                        label = 'FAILED';
+                    } else if (n.status === 'sending') {
+                        badgeClass = 'bg-sky-500/10 text-sky-400 border border-sky-500/20';
+                        label = 'SENDING';
+                    } else if (n.status === 'suppressed') {
+                        badgeClass = 'bg-slate-800 text-slate-400 border border-slate-700';
+                        label = 'SUPPRESSED';
+                    }
+
+                    const timeStr = n.sent_at.includes(' ') ? n.sent_at.split(' ')[1] : n.sent_at;
+
+                    return `
+                        <tr class="hover:bg-slate-800/40 transition">
+                            <td class="py-2.5 px-3 text-slate-500 font-mono whitespace-nowrap">${timeStr}</td>
+                            <td class="py-2.5 px-3 whitespace-nowrap">
+                                <span class="px-1.5 py-0.5 rounded bg-indigo-950/50 text-indigo-300 border border-indigo-900/40 font-semibold text-[10px] uppercase">
+                                    ${n.channel}
+                                </span>
+                            </td>
+                            <td class="py-2.5 px-3 text-slate-300 font-mono text-[11px] whitespace-nowrap" title="${n.recipient}">${n.recipient}</td>
+                            <td class="py-2.5 px-3 text-slate-200 truncate max-w-[220px]" title="${n.subject}">${n.subject}</td>
+                            <td class="py-2.5 px-3 whitespace-nowrap">
+                                <span class="px-2 py-0.5 rounded text-[10px] font-semibold ${badgeClass}">
+                                    ${label}
+                                </span>
+                            </td>
+                            <td class="py-2.5 px-3 text-sky-400 font-bold whitespace-nowrap">${n.incident_id || '—'}</td>
+                        </tr>
+                    `;
+                }).join('');
+            } catch (err) {
+                console.error("Notification history error:", err);
+            }
+        }
+
+        async function sendTestAlert(forceLive = false) {
+            const btn = document.getElementById('btn-test-live');
+            const btnText = document.getElementById('btn-test-live-text');
+            const originalText = btnText ? btnText.innerText : 'Demo: Send Real Email';
+
+            if (forceLive && btn) {
+                btn.disabled = true;
+                if (btnText) btnText.innerText = 'Sending...';
+            }
+
+            const modeDesc = forceLive ? "Live SMTP Delivery to sainaath.r2025@vitstudent.ac.in" : "Safe Dry-Run Simulation";
+            addLogEntry(`Sending: Connecting to SMTP server for ${modeDesc}...`, "INFO");
+
+            try {
+                const url = forceLive ? '/api/notifications/test?live=true' : '/api/notifications/test';
+                const res = await fetch(url, { method: 'POST' });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    const r = data.result || {};
+                    const st = r.status || 'unknown';
+
+                    if (st === 'smtp_accepted' || st === 'sent') {
+                        addLogEntry(`SMTP accepted: Handed off to SMTP relay for ${r.recipient}. Note: SMTP acceptance confirms mail server handoff, but does not guarantee arrival in the inbox (check spam folder).`, 'SUCCESS');
+                    } else if (st === 'not_configured' || st === 'missing_config') {
+                        addLogEntry(`Not configured: ${r.message || 'SMTP credentials missing in .env or Kubernetes Secret.'}`, 'WARN');
+                    } else if (st === 'timed_out') {
+                        addLogEntry(`Timed out: ${r.error || r.message || 'SMTP connection timed out.'}`, 'ERROR');
+                    } else if (st === 'dry_run') {
+                        addLogEntry(`Dry Run: ${r.message || 'Payload validated & recorded.'}`, 'INFO');
+                    } else if (st === 'failed') {
+                        addLogEntry(`Failed: ${r.error || r.message || 'SMTP delivery failed.'}`, 'ERROR');
+                    } else {
+                        addLogEntry(`Unknown outcome: Notification status is '${st}'.`, 'WARN');
+                    }
+
+                    fetchNotificationHistory();
+                    fetchNotificationStatus();
+                } else {
+                    addLogEntry(`Notification test error: ${data.message}`, 'ERROR');
+                }
+            } catch (e) {
+                addLogEntry(`Notification network error: ${e.message}`, 'ERROR');
+            } finally {
+                if (forceLive && btn) {
+                    btn.disabled = false;
+                    if (btnText) btnText.innerText = originalText;
+                }
+            }
+        }
+
+        // ── Initialization & Polling ────────────────────────────────────────
+        fetchOverview();
+        refreshPods();
+        fetchIncidents();
+        fetchNotificationStatus();
+        fetchNotificationHistory();
+
+        setInterval(() => {
+            fetchOverview();
+            refreshPods();
+            fetchIncidents();
+            fetchNotificationHistory();
+        }, 3500);
+    </script>
+</body>
+</html>

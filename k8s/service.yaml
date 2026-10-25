@@ -1,0 +1,30 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Sample Application Service
+# Exposes sample-app pods inside the cluster and on Minikube's node IP.
+#
+# Ports:
+#   port:       80    → cluster-internal port for clients and Prometheus
+#   targetPort: 5000  → container port where Flask listens
+#   nodePort:   30080 → accessible from your laptop via Minikube IP
+# ──────────────────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: sample-app-service
+  namespace: health-monitor
+  labels:
+    app: sample-app
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "5000"
+    prometheus.io/path: "/metrics"
+spec:
+  type: NodePort
+  selector:
+    app: sample-app          # routes traffic to pods with this label
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80               # port inside the cluster
+      targetPort: 5000       # port on the pod/container
+      nodePort: 30080        # port on the Minikube node (laptop-accessible)

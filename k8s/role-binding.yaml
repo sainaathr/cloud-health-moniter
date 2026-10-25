@@ -1,0 +1,19 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# RBAC — ClusterRoleBinding
+# Binds the ClusterRole to the ServiceAccount.
+# Without this binding, the ServiceAccount has NO permissions.
+# ──────────────────────────────────────────────────────────────────────────────
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: health-monitor-binding
+  labels:
+    app: health-monitor
+subjects:
+  - kind: ServiceAccount
+    name: health-monitor-sa          # must match service-account.yaml
+    namespace: health-monitor
+roleRef:
+  kind: ClusterRole
+  name: health-monitor-role          # must match role.yaml
+  apiGroup: rbac.authorization.k8s.io

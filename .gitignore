@@ -1,0 +1,43 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Virtual environment
+venv/
+.env
+.venv/
+
+# SQLite databases (generated at runtime)
+*.db
+*.sqlite
+*.sqlite3
+incidents.db
+
+# Logs and runtime diagnostics
+logs/
+*.log
+*.bak
+*.json.bak
+*.txt
+metrics.json
+
+# Kubernetes secrets (NEVER commit these)
+*secret*.yaml
+*-secret.yaml
+*.key
+*.pem
+
+# Allow example configs and requirements
+!*requirements*.txt
+!*.example.yaml
+!*.example.yml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+*.swp

@@ -1,0 +1,30 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Horizontal Pod Autoscaler (HPA)
+# Automatically scales sample-app between 2 and 6 replicas based on CPU usage.
+# When average CPU > 60%, Kubernetes adds more pods.
+# When CPU drops, it scales back down (with a cooldown period).
+#
+# PREREQUISITE: metrics-server must be enabled in Minikube:
+#   minikube addons enable metrics-server
+# ──────────────────────────────────────────────────────────────────────────────
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: sample-app-hpa
+  namespace: health-monitor
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: sample-app       # must match deployment.yaml name
+
+  minReplicas: 2           # never go below 2 (high availability)
+  maxReplicas: 6           # never go above 6
+
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60   # scale out when avg CPU > 60%
